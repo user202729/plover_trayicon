@@ -47,12 +47,15 @@ trayIcons: Dict[str, Icon]={}
 
 parser=ArgumentParser(description="Display a tray icon in the system tray.",
 		add_help=False,
+		formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 		#exit_on_error=False,
 		)
-parser.add_argument("-e", "--temporary", help="Do not store the change to the hard disk this time", action="store_true")
-parser.add_argument("-t", "--title", help="Title of the icon", default="Plover")
-parser.add_argument("id", help="ID of the icon")
-parser.add_argument("path", help="Path to the icon. If absent, the icon will be deleted", nargs="?")
+parser.add_argument("-e", "--temporary", help="Do not store the change to the hard disk this time. "
+		"Note that the next time the plugin is called without this flag, the change will be stored."
+		, action="store_true")
+parser.add_argument("-t", "--title", help="Title of the icon.", default="Plover")
+parser.add_argument("id", help="ID of the icon. Each icon should have a different ID.")
+parser.add_argument("path", help="Path to the icon. If absent, the icon will be deleted.", nargs="?")
 
 
 def deleteTrayIcon(icon_id: str)->None:
