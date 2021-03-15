@@ -2,6 +2,8 @@ from typing import Dict, Tuple, TYPE_CHECKING
 import subprocess
 import sys
 from pathlib import Path
+import argparse
+import shlex
 
 #from PyQt5.QtWidgets import QSystemTrayIcon, QApplication
 #from PyQt5.QtGui import QIcon
@@ -19,40 +21,47 @@ def sendMessage(process: subprocess.Popen, message: bytes):
 	process.stdin.write(message)
 	process.stdin.flush()
 
-def main(engine: "plover.engine.StenoEngine", argument: str)->None:
-	try:
-		icon_id, filepath=argument.split(":", maxsplit=1)
-	except ValueError:
-		icon_id=argument
-		filepath=""
+parser=argparse.ArgumentParser(description="Display a tray icon in the system tray.")
+parser.add_argument("-p", "--persistent", help="Store the change to the hard disk", action="store_true")
+parser.add_argument("-t", "--title", help="Title of the icon", default="Plover")
+parser.add_argument("id", help="ID of the icon")
+parser.add_argument("path", help="Path to the icon. If absent, the icon will be deleted", nargs="?")
 
-	if not filepath:
+def main(engine: "plover.engine.StenoEngine", arguments_string: str)->None:
+	args=parser.parse_args(shlex.split(arguments_string))
+
+	if args.path is None:
 		try:
-			process=trayIcons[icon_id]
+			process=trayIcons[args.id]
 			sendMessage(process, b"")
 			process.wait()
-			del trayIcons[icon_id]
+			del trayIcons[args.id]
 		except KeyError as e:
-			raise RuntimeError(f"Icon with the specified id ({icon_id!r}) does not exist!") from e
+			raise RuntimeError(f"Icon with the specified id ({args.id!r}) does not exist!") from e
 
 		return
 
 	try:
-		process=trayIcons[icon_id]
+		process=trayIcons[args.id]
 	except KeyError:
 		assert Path(sys.executable).stem.lower()=="python", (sys.executable, Path(sys.executable).stem)
 
+		# This function must not take any arguments or access any variables in the upper scopes.
+		# In fact, it's not called at all; rather its source code is passed to the subprocess
 		def run():
 			import sys
 			from PIL import Image
 			from pystray import Icon
 
-			icon=Icon("Plover")
+			def read_message()->bytes:
+				message_size = int.from_bytes(sys.stdin.buffer.read(8), 'little') # 8 is definitely enough
+				return sys.stdin.buffer.read(message_size)
+
+			icon=Icon(read_message().decode('u8'))
 
 			def setup(icon):
 				while True:
-					message_size = int.from_bytes(sys.stdin.buffer.read(8), 'little') # 8 is definitely enough
-					filepath=sys.stdin.buffer.read(message_size)
+					filepath=read_message()
 					if not filepath:
 						icon.stop()
 						break
@@ -72,6 +81,7 @@ def main(engine: "plover.engine.StenoEngine", argument: str)->None:
 				stdout=subprocess.DEVNULL,
 				stderr=subprocess.DEVNULL,
 				)
-		trayIcons[icon_id]=process
+		trayIcons[args.id]=process
+		sendMessage(process, args.title.encode('u8'))
 
-	sendMessage(process, filepath.encode('u8'))
+	sendMessage(process, args.path.encode('u8'))
