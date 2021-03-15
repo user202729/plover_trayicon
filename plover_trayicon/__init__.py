@@ -2,6 +2,7 @@ from typing import Dict, Tuple, TYPE_CHECKING
 import subprocess
 import sys
 from pathlib import Path
+from plover import log
 import argparse
 import shlex
 
@@ -21,14 +22,32 @@ def sendMessage(process: subprocess.Popen, message: bytes):
 	process.stdin.write(message)
 	process.stdin.flush()
 
-parser=argparse.ArgumentParser(description="Display a tray icon in the system tray.")
+
+class ArgumentParser(argparse.ArgumentParser):
+	def error(self, message):
+		log.error(message)
+		raise ValueError
+
+#	def exit(self, status=0, message=None):
+#		log.debug(f"statuscode={status}")
+#		log.error(message)
+#		raise ValueError
+
+
+parser=ArgumentParser(description="Display a tray icon in the system tray.",
+		add_help=False,
+		#exit_on_error=False,
+		)
 parser.add_argument("-p", "--persistent", help="Store the change to the hard disk", action="store_true")
 parser.add_argument("-t", "--title", help="Title of the icon", default="Plover")
 parser.add_argument("id", help="ID of the icon")
 parser.add_argument("path", help="Path to the icon. If absent, the icon will be deleted", nargs="?")
 
 def main(engine: "plover.engine.StenoEngine", arguments_string: str)->None:
-	args=parser.parse_args(shlex.split(arguments_string))
+	try:
+		args=parser.parse_args(shlex.split(arguments_string))
+	except ValueError:
+		return
 
 	if args.path is None:
 		try:
