@@ -1,19 +1,18 @@
-from typing import Dict, Tuple, TYPE_CHECKING
+from typing import Dict, Tuple, TYPE_CHECKING, NamedTuple
 import subprocess
 import sys
+import json
 from pathlib import Path
 from plover import log
 import argparse
 import shlex
+from plover.oslayer.config import CONFIG_DIR
 
 #from PyQt5.QtWidgets import QSystemTrayIcon, QApplication
 #from PyQt5.QtGui import QIcon
 
 if TYPE_CHECKING:
 	import plover.engine
-
-
-trayIcons: Dict[str, subprocess.Popen]={}
 
 def sendMessage(process: subprocess.Popen, message: bytes):
 	# might raise BlockingIOError if the subprocess misbehave
@@ -34,34 +33,41 @@ class ArgumentParser(argparse.ArgumentParser):
 #		raise ValueError
 
 
+SAVE_FILE_PATH=Path(CONFIG_DIR)/"plover_trayicon_state.json"
+
+
+class Icon(NamedTuple):
+	process: subprocess.Popen
+	title: str
+	path: str
+
+
+trayIcons: Dict[str, Icon]={}
+
+
 parser=ArgumentParser(description="Display a tray icon in the system tray.",
 		add_help=False,
 		#exit_on_error=False,
 		)
-parser.add_argument("-p", "--persistent", help="Store the change to the hard disk", action="store_true")
+parser.add_argument("-e", "--temporary", help="Do not store the change to the hard disk this time", action="store_true")
 parser.add_argument("-t", "--title", help="Title of the icon", default="Plover")
 parser.add_argument("id", help="ID of the icon")
 parser.add_argument("path", help="Path to the icon. If absent, the icon will be deleted", nargs="?")
 
-def main(engine: "plover.engine.StenoEngine", arguments_string: str)->None:
+
+def deleteTrayIcon(icon_id: str)->None:
+	# might raise KeyError if the icon is not found
+	process, title, path=trayIcons[icon_id]
+	sendMessage(process, b"")
+	process.wait()
+	del trayIcons[icon_id]
+
+
+def addTrayIcon(icon_id: str, title: str, path: str)->None:
 	try:
-		args=parser.parse_args(shlex.split(arguments_string))
-	except ValueError:
-		return
-
-	if args.path is None:
-		try:
-			process=trayIcons[args.id]
-			sendMessage(process, b"")
-			process.wait()
-			del trayIcons[args.id]
-		except KeyError as e:
-			raise RuntimeError(f"Icon with the specified id ({args.id!r}) does not exist!") from e
-
-		return
-
-	try:
-		process=trayIcons[args.id]
+		process, old_title, old_path=trayIcons[icon_id]
+		title=old_title # TODO
+		log.info("Cannot change title of existing icon")
 	except KeyError:
 		assert Path(sys.executable).stem.lower()=="python", (sys.executable, Path(sys.executable).stem)
 
@@ -100,7 +106,56 @@ def main(engine: "plover.engine.StenoEngine", arguments_string: str)->None:
 				stdout=subprocess.DEVNULL,
 				stderr=subprocess.DEVNULL,
 				)
-		trayIcons[args.id]=process
-		sendMessage(process, args.title.encode('u8'))
+		sendMessage(process, title.encode('u8'))
+		trayIcons[icon_id]=Icon(process, title, "")
 
-	sendMessage(process, args.path.encode('u8'))
+	try:
+		sendMessage(process, path.encode('u8'))
+		trayIcons[icon_id]=Icon(process, title, path)
+	except: # there should not be anything happen, but just in case
+		deleteTrayIcon(icon_id)
+		raise
+
+
+def savePersistentIcons()->None:
+	json.dump({
+		icon_id: (icon.title, icon.path)
+		for icon_id, icon in trayIcons.items()
+		}, SAVE_FILE_PATH.open("w"), ensure_ascii=False, indent=0)
+
+
+def initialLoadPersistentIcons()->None:
+	try:
+		content=json.load(SAVE_FILE_PATH.open("r"))
+		if not isinstance(content, dict):
+			raise TypeError
+		for icon_id, (title, path) in content.items():
+			if not isinstance(icon_id, str) or not isinstance(title, str) or not isinstance(path, str):
+				raise TypeError
+	except FileNotFoundError:
+		return
+	except (json.JSONDecodeError, ValueError, TypeError):
+		log.error(f"Save file at {SAVE_FILE_PATH} is corrupted")
+		return
+
+	for icon_id, (title, path) in content.items():
+		addTrayIcon(icon_id, title, path)
+initialLoadPersistentIcons()
+
+
+def main(engine: "plover.engine.StenoEngine", arguments_string: str)->None:
+	try:
+		args=parser.parse_args(shlex.split(arguments_string))
+	except ValueError:
+		return
+
+	if args.path is None:
+		try:
+			deleteTrayIcon(args.id)
+		except KeyError as e:
+			raise RuntimeError(f"Icon with the specified id ({args.id!r}) does not exist!") from e
+		if not args.temporary: savePersistentIcons()
+		return
+
+	addTrayIcon(args.id, args.title, args.path)
+	if not args.temporary: savePersistentIcons()
